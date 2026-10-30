@@ -10,7 +10,6 @@ import androidx.core.view.GestureDetectorCompat
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
 import androidx.recyclerview.widget.LinearLayoutManager
-import androidx.recyclerview.widget.RecyclerView
 import androidx.viewpager2.widget.ViewPager2
 import com.mmgpt.shoplistgpt.adapter.CategorySummaryAdapter
 import com.mmgpt.shoplistgpt.databinding.FragmentCategoryBinding
@@ -44,10 +43,12 @@ class ShopCategoriesFragment : Fragment() {
                 val x = e.rawX - location[0]
                 val y = e.rawY - location[1]
                 val child = binding.recyclerView.findChildViewUnder(x, y)
-                val position = child?.let { binding.recyclerView.getChildAdapterPosition(it) } ?: RecyclerView.NO_POSITION
-                if (position != RecyclerView.NO_POSITION) {
+                // Resolve the visible row's identity against the latest model order.
+                val categoryId = child?.let { binding.recyclerView.getChildViewHolder(it).itemId }
+                val index = viewModel.categories.value?.indexOfFirst { it.id == categoryId } ?: -1
+                if (index >= 0) {
                     val viewPager = requireActivity().findViewById<ViewPager2>(R.id.viewPager)
-                    viewPager.currentItem = position
+                    viewPager.currentItem = index
                     return true
                 }
                 return super.onDoubleTap(e)

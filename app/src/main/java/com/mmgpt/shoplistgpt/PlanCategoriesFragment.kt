@@ -81,15 +81,14 @@ class PlanCategoriesFragment : Fragment() {
         val gestureDetector = GestureDetectorCompat(requireContext(), object : GestureDetector.SimpleOnGestureListener() {
             override fun onDoubleTap(e: MotionEvent): Boolean {
                 val child = binding.recyclerView.findChildViewUnder(e.x, e.y)
-                val position = child?.let { binding.recyclerView.getChildAdapterPosition(it) } ?: RecyclerView.NO_POSITION
-                if (position != RecyclerView.NO_POSITION) {
-                    val item = adapter.currentList.getOrNull(position)
-                    if (item?.isHeading == true) {
-                        val index = position - 1
-                        val viewPager = requireActivity().findViewById<ViewPager2>(R.id.viewPager)
-                        viewPager.currentItem = index + 1
-                        return true
-                    }
+                // The visible row can lag behind the model while a list diff is pending.
+                // Resolve its stable ID, not its position (which also includes Add rows).
+                val categoryId = child?.let { binding.recyclerView.getChildViewHolder(it).itemId }
+                val index = viewModel.categories.value?.indexOfFirst { it.id == categoryId } ?: -1
+                if (index >= 0) {
+                    val viewPager = requireActivity().findViewById<ViewPager2>(R.id.viewPager)
+                    viewPager.currentItem = index + 1
+                    return true
                 }
                 return super.onDoubleTap(e)
             }
