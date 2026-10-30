@@ -9,7 +9,7 @@
 - Repository: https://github.com/ymstack/ShopListAssmt
 - Original repository: https://github.com/mmnuig/ShopListAssmt
 
-These are working evidence notes, not a completed personal reflection. Results below come from tool responses and emulator UI inspections. Task 2 is recorded below; Task 3 has not started.
+These are working evidence notes, not a completed personal reflection. Results below come from tool responses and emulator UI inspections. All three tasks are recorded below. The user approved Task 3; final publication is recorded in the submission report and conversation handoff.
 
 ## Task 1 – Android Studio setup and baseline
 
@@ -180,9 +180,103 @@ TODO (Yasin): reflect on why an intermittent bug needs timing-specific tests and
 
 ## Task 3 – Reduce duplication
 
-Not started.
+### Phase A: candidates and selection
 
-TODO: identify and compare two opportunities, select one, define success criteria before editing, implement, verify and record actual prompts. Yasin to add personal reflection.
+Starting revision: `0ed4e3818872e46f61f9c3da87ae66dfbea22700`, the approved Task 2 commit. Before Task 3, the only local changes were the existing IDE configuration files; no application changes were pending.
+
+**Candidate A: overview double-tap navigation (selected).**
+
+- Exact locations: `PlanCategoriesFragment.onViewCreated`, lines 81–100, and `ShopCategoriesFragment.onViewCreated`, lines 38–61 at the starting revision. The scope is the local GestureDetector construction through RecyclerView.setOnTouchListener.
+- Duplicated work: construct the detector; hit-test a row; read its stable ID; resolve its current category index; ignore missing IDs; navigate; forward touch events while returning false to preserve normal touch handling.
+- Why it exists: the modes use separate overview fragments, with different overview positions. Shop also converts raw screen coordinates to RecyclerView coordinates, while Plan already uses local event coordinates. These are near-duplicate blocks, not byte-for-byte copies.
+- Baseline: 20 + 24 = **44 physical lines**, or 17 + 21 = **38 nonblank, non-comment lines**. This includes braces and listener setup but excludes imports and surrounding blank separator lines.
+- Proposed refactoring: one small RecyclerView extension in CategoryNavigation.kt with a current-categories provider and a navigation callback. Keep the mode-specific page offset in each fragment. Use the event's RecyclerView-local x/y for hit-testing in the shared listener; this is the coordinate system expected by findChildViewUnder. The provider must be called when a double tap occurs, not captured as a list snapshot.
+- Benefit: one place to maintain gesture recognition and Task 2's stable-ID lookup; both modes receive future fixes together. It avoids a shared fragment hierarchy and adds no dependency.
+- Risks: coordinates, touch-event consumption, async list timing, or accidentally applying Plan's offset to Shop. The existing Task 2 tests cover both modes, offsets, duplicate names, pending diffs, removed IDs, single taps and pager identity. Additional tests will check navigation after scrolling each overview.
+
+**Candidate B: drag-reorder callback setup (not selected).**
+
+- Exact locations: `PlanCategoriesFragment.onViewCreated`, lines 40–61, and `PlanCategoryFragment.onViewCreated`, lines 43–64 at the starting revision.
+- Duplicated work: an UP/DOWN ItemTouchHelper.SimpleCallback, adapter-position lookup, placeholder rejection, conversion from UI positions to model indices, adapter.moveItem, empty onSwiped and disabled long-press drag.
+- Why it exists: Plan has two editable lists: category headings and the items inside a category. This candidate concerns the two planning screens; Shop has no drag editing.
+- Baseline: **two 22-line blocks = 44 physical lines**, or **40 nonblank, non-comment lines**. After trimming indentation and ignoring blank/comment lines, 19 of the 20 lines in each block match; the ViewModel reorder call differs.
+- Possible refactoring: a callback factory taking the adapter/current-list provider and an onMove callback for either reorderCategory or reorderItem.
+- Benefit: centralise drag direction, placeholder rules and index conversion; reduce the risk of fixing only one Plan editing screen.
+- Risks: ItemTouchHelper event ordering, asynchronous adapter.moveItem interactions, adapter initialisation and placeholder indices. Existing regression tests call the ViewModel reorder method rather than simulating a physical drag, so they would not fully verify this extraction.
+
+| Criterion | Candidate A: navigation | Candidate B: drag setup |
+| --- | --- | --- |
+| Maintainability | One shared Plan/Shop behavior and stable-ID rule | One shared rule for two Plan editing lists |
+| Simplicity | Small extension, two callbacks at call sites | Factory needs adapter access plus model/adapter movement coordination |
+| Regression risk | Lower, with substantial existing coverage | Higher, because drag event ordering lacks direct coverage |
+| Ease of verification | Existing 15 Task 2 cases plus scrolled-overview checks | Would need additional drag-event tests/manual evidence |
+| Selection | Recommended and authorised by the user's small/low-risk criterion | Documented for later consideration; not implemented |
+
+### Phase B: original state and success criteria (recorded before implementation)
+
+This section was written before changing production or test code for Task 3. The source blocks were read through Android Studio's buffer-aware tools. Their counts were calculated from those exact strings, using JavaScript in the tool orchestrator; no shell file-reading scripts were used. The measurement excludes imports, blank lines and comment-only lines for the second count, but includes braces. It is a scoped manual extraction measurement, not a repository-wide clone-detector score.
+
+Success criteria:
+
+1. Replace **two** overview gesture/ID-resolution implementations with **one** shared implementation and **two** call sites. Neither fragment should retain its own GestureDetector or stable-ID index lookup.
+2. Reduce the combined scoped implementation below its baseline **38 nonblank, non-comment lines**, counting the entire new helper function plus both replacement call sites. Report physical lines as well. Count new helper overhead, not just deleted fragment lines; exclude test/documentation lines from this production-code metric.
+3. Preserve stable-ID selection from the actual visible row and resolve it against the latest model at gesture time. Missing IDs and Plan Add placeholders must remain ignored; single taps must stay on the overview.
+4. Preserve Plan's index + 1 and Shop's index offsets, the pager identity fix, normal editing/shopping controls, XML appearance and touch-event return behavior. No ViewModel, pager, layout or dependency changes.
+5. Debug build must pass; the existing unit test and all 16 instrumentation tests must pass, including all 15 Task 2 regression cases. Add Plan and Shop scrolled-overview navigation cases to cover the coordinate consolidation. These will use the existing Activity touch-dispatch approach, with no extra library.
+6. Git diff must be limited to the two overview fragments, the shared helper, navigation tests and these notes. Do not stage, commit, push or alter local IDE configuration.
+7. Manual checks still needed: actual finger double taps after vertical scrolling, swipe paging, physical category drag then double tap, edit dialogs, and import/export on a real device or emulator. Automated Activity dispatch bypasses OS input injection and cannot establish those manual results.
+
+### Phase C: refactoring implementation
+
+The baseline/candidate/success-criteria section above was saved first. Then two scrolled-overview tests were added and run against the original production code: **2 passed** on emulator-5554. Only after that baseline run was the implementation extracted.
+
+A new internal RecyclerView extension, `setCategoryNavigation`, lives in CategoryNavigation.kt. It owns the GestureDetector, local-coordinate row hit-testing, stable-ID lookup against the latest categories and forwarding touch events. It receives a provider rather than a list snapshot so the pending-diff fix remains effective. Its navigation callback receives the current category index. Each fragment has one four-line call site and retains its own page offset (Plan +1, Shop +0).
+
+Shop's old raw-screen-to-local conversion is replaced by the event's existing RecyclerView-local x/y in the common listener. The new scroll tests are important because both the toolbar offset and parent scroll offset affect hit-testing. The listener still returns false from onTouch, and unmatched IDs/no row still return false from onDoubleTap. The existing detector class and gesture timing are retained. No fragment superclass, ViewModel, pager identity, layout, model, adapter or dependency was changed.
+
+Files changed for Task 3:
+
+- `app/src/main/java/com/mmgpt/shoplistgpt/CategoryNavigation.kt` (new shared extension).
+- `app/src/main/java/com/mmgpt/shoplistgpt/PlanCategoriesFragment.kt` (replace local listener with shared call; remove three gesture imports).
+- `app/src/main/java/com/mmgpt/shoplistgpt/ShopCategoriesFragment.kt` (same extraction, retaining Shop's offset).
+- `app/src/androidTest/java/com/mmgpt/shoplistgpt/CategoryNavigationTest.kt` (two new scrolled-overview cases and shared fixture).
+- `docs/CT4111_Topic08_Lab_Notes.md` (candidates, criteria, measurements, evidence and actual prompt).
+
+### Phase D: before-and-after comparison
+
+The same scoped counting rule from Phase B was applied to the final buffer contents: trim each line, exclude empty lines and comment-only lines, retain braces and signatures. The complete helper function is included, not just its inner statements. Package/import/Javadoc lines are outside this defined scope.
+
+| Scope | Before physical lines | Before nonblank/non-comment | After physical lines | After nonblank/non-comment |
+| --- | ---: | ---: | ---: | ---: |
+| Plan overview block/call | 20 | 17 | 4 | 4 |
+| Shop overview block/call | 24 | 21 | 4 | 4 |
+| Shared helper function | 0 | 0 | 20 | 19 |
+| Total selected scope | **44** | **38** | **28** | **27** |
+
+Result: **one duplicate implementation eliminated** (two implementations → one plus two call sites). There are **11 fewer nonblank/non-comment production lines** in the selected scope, a 28.9% reduction, or **16 fewer physical lines** in that scope. This is not a claim that all 44 old lines were identical, nor a repository-wide duplication percentage. The new helper file has 28 physical lines including its package, imports, comment and spacing; those file-level lines are explicitly excluded from the scoped function metric, just as imports were excluded from the original blocks.
+
+As a separate whole-file cross-check, counting every newline-terminated physical line (including package/import/comment/blank lines, but not an extra empty split entry after the final newline), the original two files totalled 220 lines (146 + 74). The two refactored files plus the helper total 206 (127 + 51 + 28): **14 fewer production-file lines overall**. Test and documentation additions are not included in this code-size comparison.
+
+The smaller call sites still have the mode-specific page assignment; that intentional difference remains local and visible. The two Plan drag blocks and common fragment binding/lifecycle code remain duplicated. They were not refactored because that would expand this task's selected scope.
+
+### Phase D: verification results
+
+| Check | Actual result |
+| --- | --- |
+| New Plan/Shop scroll tests before production extraction | 2 passed |
+| Debug build + unit + full instrumentation after extraction | Build successful; 1 unit test passed, 0 skipped, 0 failed; 18 instrumentation tests passed, 0 skipped, 0 failed |
+
+Post-refactoring command: `:app:assembleDebug :app:testDebugUnitTest :app:connectedDebugAndroidTest --rerun-tasks --stacktrace`. The completed suite contains 18 instrumentation tests (the previous 16 plus the 2 scroll tests), including all 15 Task 2 navigation cases. The generated Android report at `app/build/reports/androidTests/connected/debug/index.html` was read and confirms 18 tests, zero failures, zero skipped, duration 2m17.51s. This generated report is evidence to inspect/save, not a file to commit. The test fixture builds 20 categories, asserts that the NestedScrollView really scrolled, double-taps the last visible category and checks both the pager index and displayed heading. The existing fixture restores the emulator's prior shopping state after each test.
+
+### Phase E: evaluation, limitations and reflection suggestions
+
+Evaluation against the pre-recorded criteria: the two local implementations were eliminated in favour of one shared implementation; the scoped count dropped below 38 to 27; both mode-specific page offsets remain local; all 15 Task 2 tests plus both new scroll cases passed; the debug build and unit test passed. No unintended behavioral change was observed within these automated checks. This supports preservation of navigation and the tested controls, not a guarantee about every app feature.
+
+At the initial Task 3 review (before the subsequent approval to commit), only the five listed Task 3 files were intentionally changed. `git diff --check` passed, the staging area is empty, and HEAD remains `0ed4e38` on main tracking origin/main. The four IDE-file hashes recorded before Task 3 matched after the build/tests, including the existing modified deploymentTargetSelector.xml. No IDE configuration was edited, no generated artifact was staged, and Task 3 was not committed or pushed. Editor inspections found warnings but no errors; inherited detector deprecations and unrelated style warnings remain out of scope.
+
+All automated success criteria were met. The remaining manual checks listed in Phase B are explicitly unexecuted. These tests use timestamped Activity-level touch dispatch, bypass OS injection and use ViewModel methods for reordering; they do not simulate physical drag or certify import/export. Fixed layout-settling waits and the single API 37 emulator limit the breadth of evidence. No student-performed manual result is claimed.
+
+Reflection suggestions for Yasin to review: compare extracting shared behavior with merely shortening files; consider why tests made navigation a lower-risk choice than drag callbacks; explain why a modest net line reduction can still remove a meaningful maintenance obligation. These are suggestions, not personal reflections attributed to the student.
 
 ## Version control and evidence references
 
@@ -196,11 +290,13 @@ Corrected Task 1 commit: [`a48aa19ff4f8b7a52701d393887f42d9a4ba1721`](https://gi
 
 The Task 2 review confirmed the production changes are restricted to the two overview navigation handlers and pager identity handling; there are no layout changes or additional dependencies. Regression tests explicitly cover the two demonstrated failures, with both pager position and visible content assertions. Finalisation rerun: `:app:assembleDebug :app:testDebugUnitTest :app:connectedDebugAndroidTest --rerun-tasks --stacktrace` completed successfully after the Git correction. Unit tests: 1 passed, 0 skipped, 0 failed. Instrumentation tests on emulator-5554: 16 passed, no failed tests. The forced rerun executed the tasks again rather than relying on the previous run. Emulator logs included slow frames and a long GC pause, but the completed test run reported no failures.
 
-The intended Task 2 commit is “Fix category navigation and add regression tests”, following corrected Task 1 commit a48aa19. Its five-file scope is CategoryPagerAdapter.kt, PlanCategoriesFragment.kt, ShopCategoriesFragment.kt, CategoryNavigationTest.kt and these notes. Neither commit should contain added/modified IDE configuration or generated artifacts. The Task 2 commit hash and the remote-branch verification are supplied in the final conversation handoff after the commit and push; a commit cannot record its own final hash in its contents. Repository history: https://github.com/ymstack/ShopListAssmt/commits/main/ .
+Published Task 2 commit: [`0ed4e3818872e46f61f9c3da87ae66dfbea22700`](https://github.com/ymstack/ShopListAssmt/commit/0ed4e3818872e46f61f9c3da87ae66dfbea22700), “Fix category navigation and add regression tests”, following corrected Task 1 commit a48aa19. Its five-file scope is CategoryPagerAdapter.kt, PlanCategoriesFragment.kt, ShopCategoriesFragment.kt, CategoryNavigationTest.kt and these notes. The remote main branch was verified to contain both commits. Neither commit introduced IDE settings or generated files.
 
-Publication verification must compare the remote main hash with the final local HEAD and confirm Task 1 is its parent. No force-push is authorised or needed. Task 3 remains unstarted.
+Approved Task 3 commit message: “Refactor duplicated category navigation logic”. Its five intended files are listed in Task 3 above. The final source/test hashes match the tested implementation, so no new behavior change was introduced during submission preparation. The final Task 3 hash and remote verification will appear in the separate submission report and handoff after committing; this avoids trying to embed a commit's own hash in its contents. Repository history: https://github.com/ymstack/ShopListAssmt/commits/main/ .
 
-TODO: add approved maintenance commit hashes and actual saved screenshot/report references. Test reports are normally generated under `app/build/reports/tests/` and `app/build/reports/androidTests/`; confirm the files before citing them. Generated build files should not be committed.
+Publication verification must compare the remote main hash with the final local HEAD and confirm Task 1 is its parent. No force-push was used. That completed the Tasks 1/2 publication stage; Task 3 work is documented separately above.
+
+TODO (Yasin): insert actual saved screenshot references. Approved Task 1/2 hashes are above; the final Task 3 hash is in the submission report/handoff. Test reports are normally generated under `app/build/reports/tests/` and `app/build/reports/androidTests/`; confirm the files before citing them. Generated build files should not be committed.
 
 ## AI tools and actual prompt record
 
@@ -538,4 +634,192 @@ Provide a concise summary of:
 Wait for my approval before beginning Task 3.
 ````
 
-TODO: append later follow-up prompts verbatim as work proceeds.
+### Follow-up prompt 4 (verbatim)
+
+````text
+Tasks 1 and 2 are approved and successfully pushed to GitHub.
+
+We are now beginning Task 3 of CT4111 Topic 08: AI-Supported Software Maintenance.
+
+## Objective
+
+Identify and reduce code duplication in the existing ShopList Android application, particularly duplication associated with Plan and Shop modes.
+
+Follow the lecturer's requirements exactly:
+
+1. Identify at least TWO distinct opportunities to reduce code duplication.
+2. Explain and justify which opportunity should be selected.
+3. Define measurable success criteria BEFORE refactoring.
+4. Conduct the refactoring using AI.
+5. Evaluate and document the results.
+
+## Phase A — Investigate duplication
+
+Inspect the existing Kotlin codebase, focusing on Plan and Shop functionality.
+
+Identify at least two meaningful duplication opportunities.
+
+For each candidate, provide:
+- Exact files and functions involved
+- What code is duplicated
+- Why the duplication exists
+- Approximate amount of duplication
+- How it could be refactored
+- Expected maintainability benefits
+- Potential risks
+
+Compare both opportunities and recommend the best one based on maintainability, simplicity, regression risk and ease of testing.
+
+Document both candidates and your recommendation in the lab notes.
+
+## Phase B — Define success criteria
+
+Before changing any implementation code, establish measurable success criteria.
+
+Include:
+- Which duplicated code should be eliminated
+- How you will measure the reduction
+- Which existing behaviours must remain unchanged
+- What automated tests will verify the refactoring
+- What manual checks remain necessary
+
+Record the original state and success criteria in the lab notes before proceeding.
+
+## Phase C — Implement the refactoring
+
+Proceed with the recommended refactoring, provided it is small, well-defined and low-risk.
+
+Requirements:
+
+1. Make the smallest maintainable changes necessary.
+2. Preserve Plan and Shop functionality.
+3. Avoid unnecessary architectural changes.
+4. Do not modify unrelated features.
+5. Do not introduce unnecessary dependencies.
+6. Add or update tests where appropriate.
+7. Keep the Task 3 changes separate from previous commits.
+
+## Phase D — Verify the results
+
+After refactoring:
+
+1. Run the debug build.
+2. Run unit tests.
+3. Run instrumentation tests.
+4. Verify that existing Task 2 navigation regression tests still pass.
+5. Compare duplication before and after refactoring.
+6. Report the number of duplicated lines or blocks removed, using a clearly explained measurement.
+7. Identify any limitations or remaining duplication.
+8. Confirm that no unintended behavioural changes were introduced, to the extent supported by testing.
+
+Do not fabricate results.
+
+## Phase E — Documentation
+
+Update docs/CT4111_Topic08_Lab_Notes.md.
+
+Include:
+- Both duplication opportunities
+- Comparison and selection rationale
+- Original duplication measurements
+- Success criteria established before implementation
+- Refactoring details
+- Files changed
+- Test results
+- Before-and-after comparison
+- Exact AI prompts used
+- Limitations
+- Reflection notes
+
+Write clearly in natural student-level English.
+
+Do not invent my personal reflections. Instead, provide short reflection suggestions grounded in the actual work for me to review.
+
+## Phase F — Final review
+
+When finished, provide:
+
+1. The two duplication opportunities identified.
+2. Which one was selected and why.
+3. Exact files changed.
+4. Before-and-after duplication measurements.
+5. Build and test results.
+6. Any remaining risks or manual verification requirements.
+7. Git status.
+
+Do not commit or push Task 3 yet.
+
+Do not modify existing IDE configuration files.
+
+Wait for my approval before committing.
+
+Begin Task 3 now.
+````
+
+### Follow-up prompt 5 (verbatim)
+
+````text
+Task 3 is approved based on the reported implementation and test results.
+
+Please finalise Task 3 and prepare the assignment for submission.
+
+### Part 1 — Finalise GitHub
+
+1. Review the Task 3 diff one final time.
+2. Confirm the five intended Task 3 files are the only files being included.
+3. Preserve all existing local IDE configuration changes.
+4. Stage only the intended Task 3 changes.
+5. Commit with the message:
+   "Refactor duplicated category navigation logic"
+6. Push the commit to origin/main.
+7. Verify the remote commit and provide its hash and GitHub link.
+8. Confirm that no generated files or IDE settings were committed.
+
+### Part 2 — Final assignment documentation
+
+Review docs/CT4111_Topic08_Lab_Notes.md against the original assignment requirements.
+
+Make sure the document contains:
+
+- My name and student ID
+- GitHub repository URL
+- Task 1: Android setup, build and deployment
+- Task 2: Bug investigation, root causes, tests and fixes
+- Task 3: Two duplication opportunities, selection, success criteria, refactoring and evaluation
+- AI tools used and exact prompts for each task
+- Actual results and limitations
+- Reflection notes for each task
+- Commit history
+
+Clearly distinguish verified results from anything not manually checked.
+
+Do not invent screenshots, prompts, results or personal reflections.
+
+### Part 3 — Submission preparation
+
+Prepare a clean, well-organised final report suitable for copying into Microsoft Word and exporting as PDF.
+
+Use the title:
+
+CT4111 – Topic 08 Lab Assignment
+AI-Supported Software Maintenance
+
+Student: Yasin Machigov
+Student ID: 23347116
+
+Use clear headings, concise paragraphs and tables where appropriate.
+
+Keep the writing natural and at university student level, not unnecessarily formal.
+
+Include the actual prompts used. If they are too long for the main report, place them in an appendix.
+
+Leave clearly marked placeholders for screenshots and any reflections that require my personal input.
+
+Do not claim that the PDF has been created unless you actually create it.
+
+After completing the commit and preparing the report, provide the final GitHub link, commit hash, report file location and a list of anything I still need to do manually.
+````
+
+### Submission documentation audit
+
+The notes contain student details, repository URLs, setup/build/deployment, both navigation root causes with failing/passing evidence, two duplication candidates, criteria recorded before extraction, measurements, executed tests, limitations and the original prompt plus five follow-ups. Task 1 and Task 2 reflection sections remain prompts for Yasin's own input; Task 3 contains grounded suggestions rather than an invented personal reflection. Screenshot and manual-check gaps are labelled TODO. The separate final report places the exact prompt record in an appendix. No PDF has been created by the assistant.

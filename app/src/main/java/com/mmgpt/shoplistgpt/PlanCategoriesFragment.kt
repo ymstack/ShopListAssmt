@@ -1,12 +1,9 @@
 package com.mmgpt.shoplistgpt
 
 import android.os.Bundle
-import android.view.GestureDetector
 import android.view.LayoutInflater
-import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
-import androidx.core.view.GestureDetectorCompat
 import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
@@ -78,25 +75,9 @@ class PlanCategoriesFragment : Fragment() {
         binding.recyclerView.adapter = adapter
         dragHelper.attachToRecyclerView(binding.recyclerView)
 
-        val gestureDetector = GestureDetectorCompat(requireContext(), object : GestureDetector.SimpleOnGestureListener() {
-            override fun onDoubleTap(e: MotionEvent): Boolean {
-                val child = binding.recyclerView.findChildViewUnder(e.x, e.y)
-                // The visible row can lag behind the model while a list diff is pending.
-                // Resolve its stable ID, not its position (which also includes Add rows).
-                val categoryId = child?.let { binding.recyclerView.getChildViewHolder(it).itemId }
-                val index = viewModel.categories.value?.indexOfFirst { it.id == categoryId } ?: -1
-                if (index >= 0) {
-                    val viewPager = requireActivity().findViewById<ViewPager2>(R.id.viewPager)
-                    viewPager.currentItem = index + 1
-                    return true
-                }
-                return super.onDoubleTap(e)
-            }
-        })
-
-        binding.recyclerView.setOnTouchListener { _, event ->
-            gestureDetector.onTouchEvent(event)
-            false
+        binding.recyclerView.setCategoryNavigation({ viewModel.categories.value.orEmpty() }) { index ->
+            val viewPager = requireActivity().findViewById<ViewPager2>(R.id.viewPager)
+            viewPager.currentItem = index + 1
         }
 
         binding.btnClearAll.visibility = View.VISIBLE

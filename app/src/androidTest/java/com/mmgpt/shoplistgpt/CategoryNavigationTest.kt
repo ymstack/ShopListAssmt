@@ -64,6 +64,33 @@ class CategoryNavigationTest {
     @Test fun planSingleTapDoesNotNavigate() = verifySingleTap(true)
     @Test fun shopSingleTapDoesNotNavigate() = verifySingleTap(false)
 
+    @Test fun planNavigatesAfterOverviewScroll() = verifyScrolledOverview(true)
+    @Test fun shopNavigatesAfterOverviewScroll() = verifyScrolledOverview(false)
+
+    private fun verifyScrolledOverview(plan: Boolean) {
+        scenario.onActivity { activity ->
+            val longList = (0 until 20).map { index ->
+                ShoppingCategory(1000L + index, "Scroll$index", emptyList())
+            }
+            ViewModelProvider(activity)[ShoppingListViewModel::class.java].setCategories(longList)
+        }
+        openOverview(plan)
+        scenario.onActivity { activity ->
+            val scroll = activity.supportFragmentManager.fragments.single { it.isResumed }
+                .requireView() as androidx.core.widget.NestedScrollView
+            scroll.scrollTo(0, scroll.getChildAt(0).height)
+            assertTrue("Fixture must actually scroll the overview", scroll.scrollY > 0)
+        }
+        settle()
+        doubleTapName("Scroll19")
+        settle()
+        scenario.onActivity { activity ->
+            assertEquals(if (plan) 20 else 19, activity.findViewById<ViewPager2>(R.id.viewPager).currentItem)
+            val page = activity.supportFragmentManager.fragments.single { it.isResumed }.requireView()
+            assertEquals("Scroll19", page.findViewById<TextView>(R.id.tvHeading).text.toString())
+        }
+    }
+
     private fun verifySingleTap(plan: Boolean) {
         openOverview(plan)
         tapVisibleView(R.id.tvName, twice = false)

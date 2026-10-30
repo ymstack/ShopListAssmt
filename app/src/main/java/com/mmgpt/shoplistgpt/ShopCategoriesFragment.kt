@@ -1,12 +1,9 @@
 package com.mmgpt.shoplistgpt
 
 import android.os.Bundle
-import android.view.GestureDetector
 import android.view.LayoutInflater
-import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
-import androidx.core.view.GestureDetectorCompat
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -35,29 +32,9 @@ class ShopCategoriesFragment : Fragment() {
         val adapter = CategorySummaryAdapter()
         binding.recyclerView.adapter = adapter
 
-        val gestureDetector = GestureDetectorCompat(requireContext(), object : GestureDetector.SimpleOnGestureListener() {
-            override fun onDoubleTap(e: MotionEvent): Boolean {
-                // Convert raw screen coordinates to RecyclerView's coordinate system
-                val location = IntArray(2)
-                binding.recyclerView.getLocationOnScreen(location)
-                val x = e.rawX - location[0]
-                val y = e.rawY - location[1]
-                val child = binding.recyclerView.findChildViewUnder(x, y)
-                // Resolve the visible row's identity against the latest model order.
-                val categoryId = child?.let { binding.recyclerView.getChildViewHolder(it).itemId }
-                val index = viewModel.categories.value?.indexOfFirst { it.id == categoryId } ?: -1
-                if (index >= 0) {
-                    val viewPager = requireActivity().findViewById<ViewPager2>(R.id.viewPager)
-                    viewPager.currentItem = index
-                    return true
-                }
-                return super.onDoubleTap(e)
-            }
-        })
-
-        binding.recyclerView.setOnTouchListener { _, event ->
-            gestureDetector.onTouchEvent(event)
-            false
+        binding.recyclerView.setCategoryNavigation({ viewModel.categories.value.orEmpty() }) { index ->
+            val viewPager = requireActivity().findViewById<ViewPager2>(R.id.viewPager)
+            viewPager.currentItem = index
         }
 
         viewModel.categories.observe(viewLifecycleOwner) { list ->
